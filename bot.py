@@ -1,10 +1,9 @@
 """Mr. Timer — Telegram-бот-таймер на aiogram 3.x.
 
-Несколько таймеров на чат, каждый со своим номером; всё состояние — в памяти процесса.
+Несколько таймеров на чат с переиспользуемыми номерами; всё состояние — в памяти процесса.
 """
 
 import asyncio
-import itertools
 import math
 import os
 import re
@@ -20,20 +19,50 @@ from aiogram.types import Message
 HELP_TEXT = (
     "🤖 Я Mr. Timer. Команды: /timer 30s — установить таймер, "
     "/list — посмотреть активные таймеры, "
-    "/cancel — отменить все, /cancel 2 — отменить по номеру."
+    "/cancel — отменить все, /cancel 2 — отменить по номеру, "
+    "/help — полный список."
+)
+HELP_DETAIL = (
+    "🤖 Я Mr. Timer — бот-напоминалка. Полный список команд:\n"
+    "\n"
+    "<b>Команды</b>\n"
+    "/timer <i>&lt;длительность&gt;</i> — установить таймер; можно держать несколько сразу\n"
+    "/list — посмотреть все активные таймеры и остаток времени\n"
+    "/cancel — отменить все таймеры этого чата\n"
+    "/cancel <i>&lt;номер&gt;</i> — отменить один таймер (номер из /list)\n"
+    "/help — эта справка\n"
+    "/start — короткое приветствие\n"
+    "\n"
+    "<b>Длительность</b>\n"
+    "<pre>\n"
+    "45s        — 45 секунд\n"
+    "10m        — 10 минут\n"
+    "2h         — 2 часа\n"
+    "2m30s      — 2 минуты 30 секунд\n"
+    "1h35m24s   — 1 час 35 минут 24 секунды\n"
+    "</pre>\n"
+    "Единицы можно совмещать в одной команде: порядок h→m→s,\n"
+    "каждая единица не более одного раза. Регистр не важен\n"
+    "(2H = 2h). Хотя бы одно число должно быть больше нуля.\n"
+    "\n"
+    "<b>Номера</b>\n"
+    "Номера #1, #2… выдаются по чату от самого малого\n"
+    "свободного: как только таймер сработает или будет отменён,\n"
+    "его номер переиспользуется следующим."
 )
 BAD_DURATION_TEXT = (
-    "⚠️ Не понял длительность. Формат: /timer Nh, Nm или Ns, где N — целое число больше нуля. "
-    "Примеры: /timer 30s, /timer 10m, /timer 2h"
+    "⚠️ Не понял длительность. Формат: /timer Nh, Nm, Ns или комбинированный "
+    "1h35m24s (единицы в порядке h→m→s), где хотя бы одно N — целое число больше нуля. "
+    "Примеры: /timer 30s, /timer 10m, /timer 1h35m24s"
 )
 BAD_CANCEL_ARG_TEXT = "⚠️ Укажите номер таймера из /list или отправьте /cancel без аргумента. Пример: /cancel 2."
 NO_TIMERS_TEXT = "🔕 Активных таймеров нет."
 
 router = Router()
 
-DURATION_RE = re.compile(r"^(?P<n>\d+)(?P<u>[hmsHMS])$")
-UNIT_SECONDS = {"h": 3600, "m": 60, "s": 1}
-TIMER_IDS = itertools.count(1)
+DURATION_RE = re.compile(
+    r"^(?:(?P<h>\d+)h)?(?:(?P<m>\d+)m)?(?:(?P<s>\d+)s)?$", re.IGNORECASE
+)
 
 
 @dataclass
@@ -59,7 +88,7 @@ def pluralize(n: int, unit: str) -> str:
 
 
 def human(seconds: int) -> str:
-    """Длительность из секунд > 0 в читаемый вид: '1 час 30 минут'."""
+    """Длительность из секунд > 0 в читаемый вид: '1 час 35 минут 24 секунды'."""
     h, rem = divmod(seconds, 3600)
     m, s = divmod(rem, 60)
     parts = []
@@ -79,9 +108,18 @@ def remaining_text(record: TimerRecord) -> str:
     return human(rem)
 
 
+def next_timer_id(chat: dict[int, TimerRecord]) -> int:
+    # Нумерация по активным таймерам чата: малейший свободный номер,
+    # освободившиеся (сработали/отменены) переиспользуются — «125» не накопится.
+    timer_id = 1
+    while timer_id in chat:
+        timer_id += 1
+    return timer_id
+
+
 def forget(chat_id: int, record: TimerRecord) -> None:
-    # Удаляем только свою запись: в чате уже могут быть другие, более новые
-    # таймеры — их трогать нельзя; сравниваем по identity, а не по номеру.
+    # Удаляем только свою запись: номер мог уже переиспользоваться новым
+    # таймером, поэтому сверяем identity объекта, а не номер.
     chat = timers.get(chat_id)
     if chat is not None and chat.get(record.timer_id) is record:
         del chat[record.timer_id]
@@ -113,23 +151,28 @@ async def timer_task(bot: Bot, chat_id: int, record: TimerRecord) -> None:
 async def handle_timer(message: Message, command: Command) -> None:
     args = (command.args or "").strip()
     match = DURATION_RE.fullmatch(args)
-    if match is None or int(match.group("n")) <= 0:
+    seconds = 0
+    if match:
+        seconds = (
+            3600 * int(match["h"] or 0) + 60 * int(match["m"] or 0) + int(match["s"] or 0)
+        )
+    if match is None or seconds <= 0:
         await message.answer(BAD_DURATION_TEXT)
         return
 
-    n = int(match.group("n"))
-    unit = match.group("u").lower()
-    seconds = UNIT_SECONDS[unit] * n
     chat_id = message.chat.id
-
+    chat = timers.setdefault(chat_id, {})
+    timer_id = next_timer_id(chat)
     record = TimerRecord(
-        timer_id=next(TIMER_IDS), task=None, seconds=seconds,  # type: ignore[arg-type]
+        timer_id=timer_id, task=None, seconds=seconds,  # type: ignore[arg-type]
         expires_at=time.monotonic() + seconds,
     )
     record.task = asyncio.create_task(timer_task(message.bot, chat_id, record))
-    timers.setdefault(chat_id, {})[record.timer_id] = record
+    # Выбор номера и запись в dict идут одним синхронным шагом (без await между
+    # ними), поэтому два конкурентных /timer не могут выбрать один и тот же номер.
+    chat[timer_id] = record
 
-    await message.answer(f"⏱️ Таймер #{record.timer_id} на {human(seconds)} установлен")
+    await message.answer(f"⏱️ Таймер #{timer_id} на {human(seconds)} установлен")
 
 
 @router.message(Command("list"))
@@ -176,6 +219,11 @@ async def handle_cancel(message: Message, command: Command) -> None:
     if not timers.get(chat_id):
         timers.pop(chat_id, None)
     await message.answer(f"🛑 Таймер #{timer_id} отменён.")
+
+
+@router.message(Command("help"))
+async def handle_help(message: Message) -> None:
+    await message.answer(HELP_DETAIL, parse_mode="HTML")
 
 
 @router.message(CommandStart())
