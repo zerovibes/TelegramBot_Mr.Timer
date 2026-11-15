@@ -1,3 +1,5 @@
+<img src="avatar.png" alt="Аватар Mr. Timer" width="320">
+
 # Mr. Timer — Telegram reminder bot
 
 A small Telegram bot for one-shot countdown reminders. You send `/timer 30s`, the bot confirms it with a number (`#1`), and when the time is up it sends "Время вышло!". You can have **several timers running at the same time**, list them with `/list` and cancel them all or one by number. Everything lives in the memory of one process — there is no database, no files and no external storage, so the whole bot is a single Python file.
