@@ -1,0 +1,13 @@
+# Secrets: the real token lives only in .env, never commit it
+.env
+
+# Virtual environment created by run.bat / run.ps1 / run.sh
+.venv/
+
+# Python caches
+__pycache__/
+*.pyc
+
+# OS noise
+.DS_Store
+Thumbs.db
