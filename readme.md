@@ -1,4 +1,4 @@
-<img src="avatar.png" alt="Аватар Mr. Timer" width="320">
+<img src="welcome.png" alt="Аватар Mr. Timer" width="640">
 
 # Mr. Timer — Telegram reminder bot
 
