@@ -1,6 +1,8 @@
 # Mr. Timer — Telegram reminder bot
 
-A small, single-user Telegram bot for one-shot countdown reminders. You send `/timer 30s`, the bot confirms it, and when the time is up it sends you "Время вышло!" ("Time's up!"). Everything lives in the memory of one process — there is no database, no files and no external storage, so the whole bot is a single Python file.
+A small Telegram bot for one-shot countdown reminders. You send `/timer 30s`, the bot confirms it with a number (`#1`), and when the time is up it sends "Время вышло!". You can have **several timers running at the same time**, list them with `/list` and cancel them all or one by number. Everything lives in the memory of one process — there is no database, no files and no external storage, so the whole bot is a single Python file.
+
+Every bot message starts with a topic emoji: 🤖 help, ⏱️ timer set, ⏰ timer fired, 🛑 cancelled, 🔕 nothing active, 📋 list, ⚠️ error.
 
 ## TL;DR
 
@@ -12,23 +14,29 @@ You already have Python 3.12 and a bot token? Then:
 
 ## What it does
 
-- **One active timer per chat.** A new `/timer` silently replaces the previous one (it is cancelled and will never ring). `/cancel` cancels the active timer.
-- **Correct Russian plural forms** — `10 минут`, `2 минуты`, `1 секунду`, `11 часов` — handled by a dedicated `pluralize()` function.
+- **Several timers per chat, numbered `#1`, `#2`, …** — a new `/timer` does not replace the previous ones; every timer rings on its own time.
+- **`/list`** shows all active timers with their durations and the time left, most urgent first.
+- **`/cancel`** cancels all timers in the chat; **`/cancel <number>`** cancels just one.
+- **Correct Russian plural forms** — `10 минут`, `2 минуты`, `1 секунду`, `11 часов`, `2 таймера` — handled by a dedicated `pluralize()` function.
 - **Robust edge-case handling** — unreadable/zero/negative durations, missing arguments, unknown commands, arbitrary text, and users who blocked the bot.
 - **In-memory only.** Timers are `asyncio` tasks in a dict. Restarting the bot loses them — by design.
 
 ### Commands
 
-All bot replies are in Russian, exactly as written below.
+All bot replies are in Russian, exactly as written below (the `#N` number and duration obviously match your request).
 
 | You send | Bot replies |
 | --- | --- |
-| `/start` or any unrecognized text | `Я Mr. Timer. Команды: /timer 30s — установить таймер, /cancel — отменить.` |
-| `/timer <duration>` (e.g. `/timer 30s`, `/timer 10m`, `/timer 2h`) | `Таймер на 10 минут установлен` (matches your duration) |
-| — when the timer fires | `Время вышло!` |
-| `/cancel` (active timer) | `Таймер отменён` |
-| `/cancel` (no active timer) | `Нет активного таймера` |
-| `/timer` with unreadable duration (`/timer 3.5s`, `/timer 0s`, `/timer -5m`, `/timer 30s10`, `/timer` alone) | `Не понял длительность. Формат: /timer Nh, Nm или Ns, где N — целое число больше нуля. Примеры: /timer 30s, /timer 10m, /timer 2h` |
+| `/start` or any unrecognized text | `🤖 Я Mr. Timer. Команды: /timer 30s — установить таймер, /list — посмотреть активные таймеры, /cancel — отменить все, /cancel 2 — отменить по номеру.` |
+| `/timer <duration>` (e.g. `/timer 30s`, `/timer 10m`, `/timer 2h`) | `⏱️ Таймер #1 на 10 минут установлен` |
+| — when one of your timers fires | `⏰ Время вышло! #1 на 10 минут.` |
+| `/list` (active timers exist) | `📋 У вас 2 таймера:` followed by lines like `#1 — 10 минут, осталось 9 минут 52 секунды` |
+| `/list` or `/cancel` when nothing is active | `🔕 Активных таймеров нет.` |
+| `/cancel` (cancels **all** timers of the chat) | `🛑 Отменено: 2 таймера` |
+| `/cancel <number>` (that timer exists) | `🛑 Таймер #2 отменён.` |
+| `/cancel <number>` (it already fired or does not exist) | `🔕 Нет активного таймера #2.` |
+| `/cancel` with a non-numeric argument (`/cancel abc`) | `⚠️ Укажите номер таймера из /list или отправьте /cancel без аргумента. Пример: /cancel 2.` |
+| `/timer` with unreadable duration (`/timer 3.5s`, `/timer 0s`, `/timer -5m`, `/timer 30s10`, `/timer` alone) | `⚠️ Не понял длительность. Формат: /timer Nh, Nm или Ns, где N — целое число больше нуля. Примеры: /timer 30s, /timer 10m, /timer 2h` |
 
 Duration format: one argument, `N` followed by a unit letter `s` (seconds), `m` (minutes) or `h` (hours), case-insensitive. `N` must be an integer greater than zero.
 
@@ -93,7 +101,7 @@ export BOT_TOKEN=123456789:AAHfk2m_...   # then: ./run.sh or .venv/bin/python bo
 | Windows (PowerShell) | `powershell -ExecutionPolicy Bypass -File .\run.ps1` (or `.\run.ps1` if script execution is allowed) |
 | Linux / macOS | `./run.sh` (first time: `chmod +x run.sh` if it says "Permission denied") |
 
-The first run takes a minute: the script creates a virtual environment `.venv`, installs `aiogram` into it, then starts the bot. After `Starting Mr. Timer... Press Ctrl+C to stop.` the bot is online. Keep the window open — closing it or pressing **Ctrl+C** stops the bot (and any active timer is lost, by design).
+The first run takes a minute: the script creates a virtual environment `.venv`, installs `aiogram` into it, then starts the bot. After `Starting Mr. Timer... Press Ctrl+C to stop.` the bot is online. Keep the window open — closing it or pressing **Ctrl+C** stops the bot (and all active timers are lost, by design).
 
 <details>
 <summary>Manual alternative (what the scripts do inside)</summary>
@@ -110,13 +118,24 @@ python bot.py                                 # or .venv\bin/python bot.py / .ve
 
 The bot replies in Russian; send commands in English as shown.
 
-1. Find your bot by its `@username` (or use the `t.me/...` link BotFather gave you) and open the chat. Press **Start** or send `/start` — you should get the help line.
-2. Send `/timer 10s` → `Таймер на 10 секунд установлен`. Wait ~10 seconds → `Время вышло!` arrives on its own.
-3. Send `/timer 1m` → `Таймер на 1 минуту установлен`.
-4. Send `/timer 10s`, then immediately `/timer 10m` → the 10-second timer is silently replaced; only `Таймер на 10 минут установлен` will ever ring.
-5. Send `/cancel` → `Таймер отменён`. Send `/cancel` again → `Нет активного таймера`.
-6. Try bad durations: `/timer 3.5s`, `/timer 0s`, `/timer` (no argument) → each gets the format-hint message.
-7. Send anything else, e.g. `hello` or `/help` → the same short help line as `/start`.
+1. Find your bot by its `@username` (or use the `t.me/...` link BotFather gave you) and open the chat. Press **Start** or send `/start` → the 🤖 help line.
+2. Send `/timer 10s` → `⏱️ Таймер #1 на 10 секунд установлен`. Wait ~10 seconds → `⏰ Время вышло! #1 на 10 секунд.` arrives on its own.
+3. Send `/timer 1m`, then `/timer 2h` → both get confirmed (`⏱️ Таймер #2 …`, `⏱️ Таймер #3 …`). Timers do **not** replace each other — all three would have rung.
+4. Send `/list` → `📋 У вас 2 таймера:` and two lines with `осталось …` (time left), the most urgent first.
+5. Send `/cancel 2` → `🛑 Таймер #2 отменён.`; send `/list` again → only `#3` remains.
+6. Send `/cancel` → `🛑 Отменено: 1 таймер`; send `/list` → `🔕 Активных таймеров нет.`
+7. Try bad durations: `/timer 3.5s`, `/timer 0s`, `/timer` (no argument) → each gets the ⚠️ format hint.
+8. Send anything else, e.g. `hello` or `/help` → the same 🤖 help line as `/start`.
+9. Optional edge: `/cancel 99` → `🔕 Нет активного таймера #99.`
+
+## Sharing the bot with other users
+
+If you send `t.me/your_bot_username` to a friend, they get **their own timers**:
+
+- All state is keyed by Telegram's `chat.id`. Every private chat has its own unique key, so your friend's timers live under their key, yours under yours, and `Время вышло!` is only ever sent to the chat that created the timer. Neither of you sees or can cancel the other's timers.
+- It is not separate sandboxes, though: one `python bot.py` process serves everyone, and restarting it loses active timers **of all users**.
+- There is no whitelist: anyone who finds your bot's username can use it. If you want a truly private bot, add a check like `if message.chat.id != YOUR_CHAT_ID: return` at the top of the handlers.
+- In a group chat, all members share the timers of that one chat (a group has one `chat.id`).
 
 ## Troubleshooting
 
@@ -127,8 +146,9 @@ The bot replies in Russian; send commands in English as shown.
 | `ModuleNotFoundError: No module named 'aiogram'` | Dependencies were installed outside the venv, or the venv is not active. Use `run.bat` / `run.ps1` / `run.sh`, or activate `.venv` first. |
 | PowerShell says scripts are disabled | Run `powershell -ExecutionPolicy Bypass -File .\run.ps1`. |
 | `./run.sh: Permission denied` | `chmod +x run.sh`, then `./run.sh`. |
+| `🔕 Нет активного таймера #N` in response to `/cancel N` | That timer already fired or was cancelled earlier — check the current numbers with `/list`. |
 | Bot says nothing at all | The window was closed / Ctrl+C pressed, or you blocked the bot in Telegram (unblock it and send `/start`). |
-| Token works on your machine but timers vanish after restart | By design: state lives only in this process. |
+| Timers vanish after a restart | By design: state lives only in this process. |
 
 ## Project structure
 
@@ -147,14 +167,16 @@ The bot replies in Russian; send commands in English as shown.
 ## How it works (short version)
 
 - `main()` reads `BOT_TOKEN` from the environment (clean exit with code 1 if missing), then starts long polling via `Dispatcher.start_polling()` (aiogram 3.x).
-- Each `/timer` parses `N` + unit from `command.args` with the regex `^(?P<n>\d+)(?P<u>[hmsHMS])$`, cancels any previous timer task, and schedules a new `asyncio.sleep()` task.
-- The task sleeps strictly by the parsed duration, sends `Время вышло!` when it wakes, and deletes its own entry from the `timers` dict **only if the entry is still its own** (`timers.get(chat_id) is record`) — so a replaced or cancelled timer can never overwrite or delete the new one.
+- Each `/timer` parses `N` + unit from `command.args` with the regex `^(?P<n>\d+)(?P<u>[hmsHMS])$`, assigns the next sequential number (`itertools.count(1)`) and schedules an `asyncio.sleep()` task. Previous timers of the same chat keep running — that is how "several timers at once" works.
+- Storage is `timers[chat_id][timer_id] -> TimerRecord`. `expires_at` (from `time.monotonic()`) is only used to compute the "осталось" (remaining time) shown by `/list`; the task sleeps strictly by the parsed duration.
+- On firing or on `/cancel`, a record is deleted from the dict **only if the entry is still its own** (`chat.get(record.timer_id) is record` — an identity check, not a number check), so a fired or cancelled timer can never delete another timer's entry; when the last timer of a chat is gone, the chat's key is dropped entirely.
 - `CancelledError` is swallowed inside the task, so a cancelled timer never sends anything. If the user blocked the bot, `TelegramForbiddenError` is caught and the entry is removed silently.
 
 ## Known limitations (by design)
 
-- One active timer per chat; no combined durations like `1h30m`, no Cyrillic units, no upper duration limit, no persistence.
-- State is process memory only: a restart loses all timers.
+- Several timers per chat are supported, but there is no cap — every timer is one `asyncio` task in one process; don't schedule thousands of them.
+- No combined durations like `1h30m`, no Cyrillic units, no upper duration limit, no persistence.
+- State is process memory only: a restart loses all timers of all users.
 - Run the bot in a single process; running two copies would double every reply.
 
 ## Publishing this project to GitHub (reference)
